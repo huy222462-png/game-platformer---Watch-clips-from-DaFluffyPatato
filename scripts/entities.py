@@ -136,6 +136,16 @@ class Enemy(PhysicsEntity):
         else:
             surf.blit(self.game.assets['gun'], (self.rect().centerx + 4 - offset[0], self.rect().centery - offset[1]))
 
+    def take_hit(self):
+        """
+        Default enemy dies immediately when hit. Return True if dead (so caller may remove it).
+        """
+        try:
+            self.game.sfx['hit'].play()
+        except Exception:
+            pass
+        return True
+
 class Player(PhysicsEntity):
     def __init__(self, game, pos, size):
         super().__init__(game, 'player', pos, size)
@@ -334,3 +344,58 @@ class Player(PhysicsEntity):
         except Exception:
             pass
         return True
+
+
+class Boss(Enemy):
+    """A stronger enemy that requires multiple hits to kill."""
+    def __init__(self, game, pos, size, hp=10):
+        super().__init__(game, pos, size)
+        # override type to allow separate assets if present (e.g., 'enemy/boss')
+        self.type = 'enemy'
+        self.hp = hp
+        self.max_hp = hp
+        # boss might be larger; adjust animation if boss asset present
+        try:
+            self.animation = self.game.assets.get('enemy/idle').copy()
+        except Exception:
+            pass
+
+    def take_hit(self):
+        """Reduce HP. Return True when dead."""
+        self.hp -= 1
+        try:
+            self.game.sfx['hit'].play()
+        except Exception:
+            pass
+        # spawn smaller feedback
+        for i in range(8):
+            angle = random.random() * math.pi * 2
+            speed = random.random() * 2
+            self.game.particles.append(Particle(self.game, 'particle', self.rect().center, velocity=[math.cos(angle) * speed, math.sin(angle) * speed], frame=random.randint(0, 7)))
+        self.game.sparks.append(Spark(self.rect().center, 0, 3 + random.random()))
+
+        if self.hp <= 0:
+            # stronger death effect
+            for i in range(40):
+                angle = random.random() * math.pi * 2
+                speed = random.random() * 5
+                self.game.sparks.append(Spark(self.rect().center, angle, 2 + random.random()))
+                self.game.particles.append(Particle(self.game, 'particle', self.rect().center, velocity=[math.cos(angle + math.pi) * speed * 0.5, math.sin(angle + math.pi) * speed * 0.5], frame=random.randint(0, 7)))
+            return True
+        return False
+
+    def render(self, surf, offset=(0, 0)):
+        # draw boss (reuse enemy render)
+        super().render(surf, offset=offset)
+        # draw simple health bar above boss
+        try:
+            w = self.rect().width
+            hp_ratio = max(0, self.hp / max(1, self.max_hp))
+            bar_w = int(w * hp_ratio)
+            bar_h = 4
+            bar_x = self.rect().x - offset[0]
+            bar_y = self.rect().y - 8 - offset[1]
+            pygame.draw.rect(surf, (80, 20, 20), (bar_x, bar_y, w, bar_h))
+            pygame.draw.rect(surf, (200, 30, 30), (bar_x, bar_y, bar_w, bar_h))
+        except Exception:
+            pass

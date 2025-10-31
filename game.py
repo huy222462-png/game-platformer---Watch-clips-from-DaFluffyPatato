@@ -8,7 +8,7 @@ import pygame
 from scripts.particle import Particle
 from scripts.spark import Spark
 from scripts.utils import load_image, load_images, Animation
-from scripts.entities import Player, Enemy
+from scripts.entities import Player, Enemy, Boss
 from scripts.ui import HealthBar
 from scripts.tilemap import Tilemap
 from scripts.clouds import Clouds
@@ -125,23 +125,62 @@ class Game:
         self.pickups = []
 
         self.tilemap = Tilemap(self, tile_size=16)
+        # build a stable, sorted list of JSON map files (numerical order when possible)
+        map_dir = os.path.join('data', 'maps')
+        files = [f for f in os.listdir(map_dir) if f.lower().endswith('.json')]
+        def _map_sort_key(fn):
+            name = os.path.splitext(fn)[0]
+            try:
+                return int(name)
+            except Exception:
+                return name
+        files.sort(key=_map_sort_key)
+        self.map_files = files
+
         self.level = 0
-        self.load_level(self.level)
+        # clamp level and load first level (load_level handles errors)
+        if self.map_files:
+            self.level = max(0, min(self.level, len(self.map_files) - 1))
+            self.load_level(self.level)
 
         self.screenshake = 0
         # pause flag (toggle with ESC during gameplay)
         self.paused = False
 
 
-    def load_level(self, map_id):
-        self.tilemap.load('data/maps/' + str(map_id) + '.json')
+    def load_level(self, map_index):
+        """Load a map by index into the sorted `self.map_files` list.
+
+        This is more robust than assuming filenames are consecutive integers
+        and avoids counting non-json files. If loading fails (invalid JSON,
+        etc.) the function will log the error and fall back to an empty map
+        so the game can continue instead of crashing.
+        """
+        # ensure we have a files list
+        if not hasattr(self, 'map_files') or not self.map_files:
+            # nothing to load
+            self.tilemap.tilemap = {}
+            self.tilemap.offgrid_tiles = []
+            return
+
+        # clamp the index
+        map_index = max(0, min(map_index, len(self.map_files) - 1))
+        map_path = os.path.join('data', 'maps', self.map_files[map_index])
+        try:
+            self.tilemap.load(map_path)
+        except Exception as e:
+            print(f"Failed to load map '{map_path}': {e}")
+            # fallback to an empty map so the game won't crash; user can fix the JSON
+            self.tilemap.tilemap = {}
+            self.tilemap.offgrid_tiles = []
 
         self.leaf_spawners = []
         for tree in self.tilemap.extract([('large_decor', 2)], keep=True):
             self.leaf_spawners.append(pygame.Rect(4 + tree['pos'][0], 4 + tree['pos'][1], 23, 13))
 
         self.enemies = []
-        for spawner in self.tilemap.extract([('spawners', 0), ('spawners', 1)]):
+        # include variant 2 for boss spawners
+        for spawner in self.tilemap.extract([('spawners', 0), ('spawners', 1), ('spawners', 2)]):
             if spawner['variant'] == 0:
                 self.player.pos = spawner['pos']
                 self.player.air_time = 0
@@ -150,8 +189,16 @@ class Game:
                     self.player.hits = 0
                 except Exception:
                     pass
-            else:
+            elif spawner['variant'] == 1:
                 self.enemies.append(Enemy(self, spawner['pos'], (8, 15)))
+            elif spawner['variant'] == 2:
+                # spawn a boss (bigger size and more HP)
+                try:
+                    boss = Boss(self, spawner['pos'], (32, 48), hp=12)
+                    self.enemies.append(boss)
+                except Exception:
+                    # fallback to normal enemy if Boss construction fails
+                    self.enemies.append(Enemy(self, spawner['pos'], (8, 15)))
 
         # extract item pickups from map. Variant mapping:
         # 0 -> shuriken pickup, 1 -> kunai pickup
@@ -443,7 +490,11 @@ class Game:
                 if not len(self.enemies):  # killed all the enemies
                     self.transition += 1
                     if self.transition > 30:
-                        self.level = min(self.level + 1, len(os.listdir('data/maps')) - 1)
+                        # advance to next map using the precomputed json list
+                        if hasattr(self, 'map_files') and self.map_files:
+                            self.level = min(self.level + 1, len(self.map_files) - 1)
+                        else:
+                            self.level = self.level + 1
                         self.load_level(self.level)
                 if self.transition < 0:
                     self.transition += 1
@@ -537,25 +588,37 @@ class Game:
                             hit_enemy = enemy
                             break
                     if hit_enemy:
-                        try:
-                            self.enemies.remove(hit_enemy)
-                        except Exception:
-                            pass
-                        try:
-                            self.projectiles.remove(projectile)
-                        except Exception:
-                            pass
-                        # spawn hit effects
-                        for i in range(20):
-                            angle = random.random() * math.pi * 2
-                            speed = random.random() * 5
-                            self.sparks.append(Spark(hit_enemy.rect().center, angle, 2 + random.random()))
-                            self.particles.append(Particle(self, 'particle', hit_enemy.rect().center, velocity=[math.cos(angle + math.pi) * speed * 0.5, math.sin(angle + math.pi) * speed * 0.5], frame=random.randint(0,7)))
-                        try:
-                            self.sfx['hit'].play()
-                        except Exception:
-                            pass
-                        continue
+                            # delegate hit handling to the enemy (Boss can take multiple hits)
+                            dead = True
+                            try:
+                                if hasattr(hit_enemy, 'take_hit'):
+                                    dead = hit_enemy.take_hit()
+                                else:
+                                    dead = True
+                            except Exception:
+                                dead = True
+                            # remove projectile regardless
+                            try:
+                                self.projectiles.remove(projectile)
+                            except Exception:
+                                pass
+
+                            if dead:
+                                try:
+                                    self.enemies.remove(hit_enemy)
+                                except Exception:
+                                    pass
+                                # spawn hit effects for death
+                                for i in range(20):
+                                    angle = random.random() * math.pi * 2
+                                    speed = random.random() * 5
+                                    self.sparks.append(Spark(hit_enemy.rect().center, angle, 2 + random.random()))
+                                    self.particles.append(Particle(self, 'particle', hit_enemy.rect().center, velocity=[math.cos(angle + math.pi) * speed * 0.5, math.sin(angle + math.pi) * speed * 0.5], frame=random.randint(0,7)))
+                                try:
+                                    self.sfx['hit'].play()
+                                except Exception:
+                                    pass
+                            continue
                     if self.tilemap.solid_check(projectile[0]):
                         try:
                             self.projectiles.remove(projectile)
