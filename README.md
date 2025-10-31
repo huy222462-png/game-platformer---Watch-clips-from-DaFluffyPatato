@@ -3,3 +3,6 @@ Game 2D, watch clip from DaFluffyPatato. this progam just learn. So it dont use 
  1 file changed, 2 insertions(+), 1 deletion(-)
 Làm thêm được giao diện đăng nhập vào file json.
 Làm thêm được skill như phi tiêu(shuriken), vũ khí tầm gần(kunai).
+------------------
+Chạy game bằng File game.py
+Các file dữ liệu hình ảnh từ asset animation đến background cũng như âm thânh đều nằm trong Folder Data

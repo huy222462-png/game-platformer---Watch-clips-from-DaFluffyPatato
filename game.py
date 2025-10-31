@@ -61,10 +61,27 @@ class Game:
             'particle/particle': Animation(load_images('particles/particle'), img_dur=6, loop=False),
             'gun': load_image('gun.png'),
             'projectile': load_image('projectile.png'),
+            'logo': None,
             # optional item icons (user placed images in data/images/entities/player/items)
             'item/kunai': None,
             'item/shuriken': None,
         }
+
+        # if user provided a background image for login/map, prefer it
+        try:
+            custom_bg = load_image('backgroundDNDK.jpg')
+            if custom_bg:
+                self.assets['background'] = custom_bg
+        except Exception:
+            pass
+
+        # try load logo image (use logogame.png in data/images root)
+        try:
+            logo_img = load_image('logogame.png')
+            if logo_img:
+                self.assets['logo'] = logo_img
+        except Exception:
+            self.assets['logo'] = None
 
         # try to load item icons if files exist
         try:
@@ -112,6 +129,8 @@ class Game:
         self.load_level(self.level)
 
         self.screenshake = 0
+        # pause flag (toggle with ESC during gameplay)
+        self.paused = False
 
 
     def load_level(self, map_id):
@@ -338,184 +357,70 @@ class Game:
 
         # Main loop
         while True:
-            self.display.fill((0, 0, 0, 0)) # RGBA Color
-            self.display_2.blit(self.assets['background'], (0, 0))
+            # clear logical display (pixel-art surface)
+            self.display.fill((0, 0, 0, 0))  # RGBA Color
 
-            self.screenshake = max(0, self.screenshake - 1)
+            # draw background if available, otherwise fill with a fallback color
+            bg = self.assets.get('background')
+            if bg:
+                try:
+                    self.display_2.blit(bg, (0, 0))
+                except Exception:
+                    self.display_2.fill((12, 18, 36))
+            else:
+                self.display_2.fill((12, 18, 36))
 
-            if not len(self.enemies): # killed all the enemies
-                self.transition += 1
-                if self.transition > 30:
-                    self.level = min(self.level + 1, len(os.listdir('data/maps')) - 1)
-                    self.load_level(self.level)
-            if self.transition < 0:
-                self.transition += 1
-
-            if self.dead:
-                self.dead += 1
-                if self.dead >= 10:
-                    self.transition = min(30, self.transition + 1)
-                if self.dead > 40:
-                    self.load_level(self.level)
-
-            self.scroll[0] += (self.player.rect().centerx - self.display.get_width() / 2 - self.scroll[0]) / 30
-            self.scroll[1] += (self.player.rect().centery - self.display.get_height() / 2 - self.scroll[1]) / 30
-            render_scroll = (int(self.scroll[0]), int(self.scroll[1]))
-
-            for rect in self.leaf_spawners:
-                if random.random() * 49999 < rect.width * rect.height:
-                    pos = (rect.x + random.random() * rect.width, rect.y + random.random() * rect.height)
-                    self.particles.append(Particle(self, 'leaf', pos, velocity=[-0.1, 0.3], frame=random.randint(0, 20)))
-
-            self.clouds.update()
-            self.clouds.render(self.display, offset= render_scroll)
-
-            self.tilemap.render(self.display, offset=render_scroll)
-
-            for enemy in self.enemies.copy():
-                kill = enemy.update(self.tilemap, (0,0))
-                enemy.render(self.display, offset=render_scroll)
-                if kill:
-                    self.enemies.remove(enemy)
-
-            if not self.dead:
-                self.player.update(self.tilemap, (self.movement[1] - self.movement[0], 0))
-                self.player.render(self.display, offset=render_scroll)
-
-                # render pickups in the world and check for pickup collision
-                for pu in self.pickups.copy():
-                    px, py = pu['pos']
-                    # draw icon smaller than player
-                    icon_size = 12
-                    img = None
-                    if pu['type'] == 'kunai':
-                        img = self.assets.get('item/kunai')
-                    elif pu['type'] == 'shuriken':
-                        img = self.assets.get('item/shuriken')
-
-                    draw_x = int(px - icon_size // 2 - render_scroll[0])
-                    draw_y = int(py - icon_size // 2 - render_scroll[1])
-                    if img:
-                        try:
-                            surf_img = pygame.transform.scale(img, (icon_size, icon_size))
-                            self.display.blit(surf_img, (draw_x, draw_y))
-                        except Exception:
-                            pygame.draw.rect(self.display, (255, 255, 0), (draw_x, draw_y, icon_size, icon_size))
-                    else:
-                        pygame.draw.rect(self.display, (255, 255, 0), (draw_x, draw_y, icon_size, icon_size))
-
-                    # collision check in world coords
-                    pickup_rect = pygame.Rect(px - icon_size // 2, py - icon_size // 2, icon_size, icon_size)
-                    if pickup_rect.colliderect(self.player.rect()):
-                        # give the item to player
-                        if pu['type'] == 'shuriken':
-                            self.player.give_item('shuriken', 1)
-                        elif pu['type'] == 'kunai':
-                            self.player.give_item('kunai', 1)
-                        try:
-                            self.sfx['shoot'].play()
-                        except Exception:
-                            pass
-                        self.pickups.remove(pu)
-
-            # [[x,y], direction, timer]
-            for projectile in self.projectiles.copy():
-                projectile[0][0] += projectile[1]
-                projectile[2] += 1
-                img = self.assets['projectile']
-                self.display.blit(img, (projectile[0][0] - img.get_width() / 2 - render_scroll[0], projectile[0][1] - img.get_height() / 2 - render_scroll[1]))
-                # check collision with enemies
-                hit_enemy = None
-                for enemy in self.enemies.copy():
-                    if enemy.rect().collidepoint(projectile[0]):
-                        hit_enemy = enemy
-                        break
-                if hit_enemy:
-                    try:
-                        self.enemies.remove(hit_enemy)
-                    except Exception:
-                        pass
-                    try:
-                        self.projectiles.remove(projectile)
-                    except Exception:
-                        pass
-                    # spawn hit effects
-                    for i in range(20):
-                        angle = random.random() * math.pi * 2
-                        speed = random.random() * 5
-                        self.sparks.append(Spark(hit_enemy.rect().center, angle, 2 + random.random()))
-                        self.particles.append(Particle(self, 'particle', hit_enemy.rect().center, velocity=[math.cos(angle + math.pi) * speed * 0.5, math.sin(angle + math.pi) * speed * 0.5], frame=random.randint(0,7)))
-                    try:
-                        self.sfx['hit'].play()
-                    except Exception:
-                        pass
-                    continue
-                if self.tilemap.solid_check(projectile[0]):
-                    self.projectiles.remove(projectile)
-                    for i in range(4):
-                        self.sparks.append(Spark(projectile[0], random.random() - 0.5 + (math.pi if projectile[1] > 0 else 0), 2 + random.random()))
-                elif projectile[2] > 360:
-                    self.projectiles.remove(projectile)
-                elif abs(self.player.dashing) < 50:
-                    if self.player.rect().collidepoint(projectile[0]):
-                        # delegate hit handling to player (tracks hits and triggers death at max hits)
-                        self.projectiles.remove(projectile)
-                        self.player.take_hit()
-
-
-            for spark in self.sparks.copy():
-                kill = spark.update()
-                spark.render(self.display, offset=render_scroll)
-                if kill:
-                    self.sparks.remove(spark)
-
-            display_mask = pygame.mask.from_surface(self.display)
-            display_silhouette = display_mask.to_surface(setcolor=(0, 0, 0, 180), unsetcolor=(0, 0, 0, 0))
-            for offset in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                self.display_2.blit(display_silhouette, offset)
-
-            for particle in self.particles.copy():
-                kill = particle.update()
-                particle.render(self.display, offset=render_scroll)
-                if particle.type == 'left':
-                    particle.pos[0] += math.sin(particle.animation.frame * 0.035) * 0.3
-                if kill:
-                    self.particles.remove(particle)
-
-            # check for input or windows will think it's not responding
+            # --- event processing (do this early so ESC toggles pause immediately) ---
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     pygame.quit()  # pygame only closes pygame
                     sys.exit()  # exit the app
 
                 if event.type == pygame.KEYDOWN:
+                    # toggle pause
+                    if event.key == pygame.K_ESCAPE:
+                        self.paused = not self.paused
+                        # small audio hint when pausing/unpausing
+                        try:
+                            if self.paused:
+                                self.sfx.get('ambience', pygame.mixer.Sound('data/sfx/ambience.wav')).set_volume(0.1)
+                            else:
+                                self.sfx.get('ambience', pygame.mixer.Sound('data/sfx/ambience.wav')).set_volume(0.2)
+                        except Exception:
+                            pass
+
                     if event.key == pygame.K_LEFT:
                         self.movement[0] = True
                     if event.key == pygame.K_RIGHT:
                         self.movement[1] = True
                     if event.key == pygame.K_UP:
                         if self.player.jump():
-                            self.sfx['jump'].play()
+                            try:
+                                self.sfx['jump'].play()
+                            except Exception:
+                                pass
                     if event.key == pygame.K_x:
                         self.player.dash()
                     # item usage keys
                     if event.key == pygame.K_z:
                         # throw shuriken
-                        used = self.player.use_shuriken()
+                        try:
+                            used = self.player.use_shuriken()
+                        except Exception:
+                            used = False
                         if not used:
-                            # optional: play empty sound or small feedback
                             pass
                     if event.key == pygame.K_c:
-                        # kunai attack (short-range with cooldown)
-                        used = self.player.use_kunai()
+                        try:
+                            used = self.player.use_kunai()
+                        except Exception:
+                            used = False
                         if not used:
                             pass
                     # debug keys to give items (for testing/pickups)
                     if event.key == pygame.K_9:
-                        # give 10 shuriken
                         self.player.give_item('shuriken', 10)
                     if event.key == pygame.K_0:
-                        # give 10 kunai uses
                         self.player.give_item('kunai', 10)
                     # debug: spawn pickup at player position
                     if event.key == pygame.K_p:
@@ -524,19 +429,194 @@ class Game:
                     if event.key == pygame.K_o:
                         pos = (self.player.rect().centerx, self.player.rect().centery)
                         self.pickups.append({'type': 'kunai', 'pos': [pos[0], pos[1]]})
+
                 if event.type == pygame.KEYUP:
                     if event.key == pygame.K_LEFT:
                         self.movement[0] = False
                     if event.key == pygame.K_RIGHT:
                         self.movement[1] = False
 
+            # If paused, skip gameplay updates but still render the current frame and overlay
+            if not self.paused:
+                self.screenshake = max(0, self.screenshake - 1)
+
+                if not len(self.enemies):  # killed all the enemies
+                    self.transition += 1
+                    if self.transition > 30:
+                        self.level = min(self.level + 1, len(os.listdir('data/maps')) - 1)
+                        self.load_level(self.level)
+                if self.transition < 0:
+                    self.transition += 1
+
+                if self.dead:
+                    self.dead += 1
+                    if self.dead >= 10:
+                        self.transition = min(30, self.transition + 1)
+                    if self.dead > 40:
+                        self.load_level(self.level)
+
+                self.scroll[0] += (self.player.rect().centerx - self.display.get_width() / 2 - self.scroll[0]) / 30
+                self.scroll[1] += (self.player.rect().centery - self.display.get_height() / 2 - self.scroll[1]) / 30
+                render_scroll = (int(self.scroll[0]), int(self.scroll[1]))
+
+                for rect in self.leaf_spawners:
+                    if random.random() * 49999 < rect.width * rect.height:
+                        pos = (rect.x + random.random() * rect.width, rect.y + random.random() * rect.height)
+                        self.particles.append(Particle(self, 'leaf', pos, velocity=[-0.1, 0.3], frame=random.randint(0, 20)))
+
+                self.clouds.update()
+                self.clouds.render(self.display, offset=render_scroll)
+
+                self.tilemap.render(self.display, offset=render_scroll)
+
+                for enemy in self.enemies.copy():
+                    kill = enemy.update(self.tilemap, (0, 0))
+                    enemy.render(self.display, offset=render_scroll)
+                    if kill:
+                        try:
+                            self.enemies.remove(enemy)
+                        except Exception:
+                            pass
+
+                if not self.dead:
+                    self.player.update(self.tilemap, (self.movement[1] - self.movement[0], 0))
+                    self.player.render(self.display, offset=render_scroll)
+
+                    # render pickups in the world and check for pickup collision
+                    for pu in self.pickups.copy():
+                        px, py = pu['pos']
+                        # draw icon smaller than player
+                        icon_size = 12
+                        img = None
+                        if pu['type'] == 'kunai':
+                            img = self.assets.get('item/kunai')
+                        elif pu['type'] == 'shuriken':
+                            img = self.assets.get('item/shuriken')
+
+                        draw_x = int(px - icon_size // 2 - render_scroll[0])
+                        draw_y = int(py - icon_size // 2 - render_scroll[1])
+                        if img:
+                            try:
+                                surf_img = pygame.transform.scale(img, (icon_size, icon_size))
+                                self.display.blit(surf_img, (draw_x, draw_y))
+                            except Exception:
+                                pygame.draw.rect(self.display, (255, 255, 0), (draw_x, draw_y, icon_size, icon_size))
+                        else:
+                            pygame.draw.rect(self.display, (255, 255, 0), (draw_x, draw_y, icon_size, icon_size))
+
+                        # collision check in world coords
+                        pickup_rect = pygame.Rect(px - icon_size // 2, py - icon_size // 2, icon_size, icon_size)
+                        if pickup_rect.colliderect(self.player.rect()):
+                            # give the item to player
+                            if pu['type'] == 'shuriken':
+                                self.player.give_item('shuriken', 1)
+                            elif pu['type'] == 'kunai':
+                                self.player.give_item('kunai', 1)
+                            try:
+                                self.sfx['shoot'].play()
+                            except Exception:
+                                pass
+                            try:
+                                self.pickups.remove(pu)
+                            except Exception:
+                                pass
+
+                # [[x,y], direction, timer]
+                for projectile in self.projectiles.copy():
+                    projectile[0][0] += projectile[1]
+                    projectile[2] += 1
+                    img = self.assets['projectile']
+                    try:
+                        self.display.blit(img, (projectile[0][0] - img.get_width() / 2 - render_scroll[0], projectile[0][1] - img.get_height() / 2 - render_scroll[1]))
+                    except Exception:
+                        pass
+                    # check collision with enemies
+                    hit_enemy = None
+                    for enemy in self.enemies.copy():
+                        if enemy.rect().collidepoint(projectile[0]):
+                            hit_enemy = enemy
+                            break
+                    if hit_enemy:
+                        try:
+                            self.enemies.remove(hit_enemy)
+                        except Exception:
+                            pass
+                        try:
+                            self.projectiles.remove(projectile)
+                        except Exception:
+                            pass
+                        # spawn hit effects
+                        for i in range(20):
+                            angle = random.random() * math.pi * 2
+                            speed = random.random() * 5
+                            self.sparks.append(Spark(hit_enemy.rect().center, angle, 2 + random.random()))
+                            self.particles.append(Particle(self, 'particle', hit_enemy.rect().center, velocity=[math.cos(angle + math.pi) * speed * 0.5, math.sin(angle + math.pi) * speed * 0.5], frame=random.randint(0,7)))
+                        try:
+                            self.sfx['hit'].play()
+                        except Exception:
+                            pass
+                        continue
+                    if self.tilemap.solid_check(projectile[0]):
+                        try:
+                            self.projectiles.remove(projectile)
+                        except Exception:
+                            pass
+                        for i in range(4):
+                            self.sparks.append(Spark(projectile[0], random.random() - 0.5 + (math.pi if projectile[1] > 0 else 0), 2 + random.random()))
+                    elif projectile[2] > 360:
+                        try:
+                            self.projectiles.remove(projectile)
+                        except Exception:
+                            pass
+                    elif abs(self.player.dashing) < 50:
+                        if self.player.rect().collidepoint(projectile[0]):
+                            # delegate hit handling to player (tracks hits and triggers death at max hits)
+                            try:
+                                self.projectiles.remove(projectile)
+                            except Exception:
+                                pass
+                            self.player.take_hit()
+
+
+                for spark in self.sparks.copy():
+                    kill = spark.update()
+                    spark.render(self.display, offset=render_scroll)
+                    if kill:
+                        try:
+                            self.sparks.remove(spark)
+                        except Exception:
+                            pass
+
+                display_mask = pygame.mask.from_surface(self.display)
+                display_silhouette = display_mask.to_surface(setcolor=(0, 0, 0, 180), unsetcolor=(0, 0, 0, 0))
+                for offset in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    self.display_2.blit(display_silhouette, offset)
+
+                for particle in self.particles.copy():
+                    kill = particle.update()
+                    particle.render(self.display, offset=render_scroll)
+                    if particle.type == 'left':
+                        particle.pos[0] += math.sin(particle.animation.frame * 0.035) * 0.3
+                    if kill:
+                        try:
+                            self.particles.remove(particle)
+                        except Exception:
+                            pass
+
+            else:
+                # paused: keep render_scroll stable so the current frame shows; create a no-op render_scroll
+                render_scroll = (int(self.scroll[0]), int(self.scroll[1]))
+
+            # transition effect (still draw even when paused)
             if self.transition:
                 transition_surf = pygame.Surface(self.display.get_size())
                 pygame.draw.circle(transition_surf, (255, 255, 255), (self.display.get_width() // 2, self.display.get_height() // 2), (30 - abs(self.transition)) * 8)
                 transition_surf.set_colorkey((255, 255, 255)) # set it transparent by ignoring the white color
                 self.display.blit(transition_surf, (0, 0))
 
+            # composite logical display onto the fixed HUD display
             self.display_2.blit(self.display, (0, 0))
+
             # draw HUD (fixed to screen) on display_2 so it scales with the final window
             try:
                 # prepare items: for kunai include cooldown ratio and image if available
@@ -551,6 +631,19 @@ class Game:
                 self.hud.render_with_items(self.display_2, self.player.hits, items)
             except Exception:
                 pass
+
+            # if paused, overlay a translucent layer with PAUSE
+            if self.paused:
+                try:
+                    overlay = pygame.Surface(self.display_2.get_size(), pygame.SRCALPHA)
+                    overlay.fill((0, 0, 0, 150))
+                    self.display_2.blit(overlay, (0, 0))
+                    pause_font = getattr(self, 'ui_font', pygame.font.Font(None, 36))
+                    pause_surf = pause_font.render('PAUSE', True, (255, 255, 255))
+                    self.display_2.blit(pause_surf, (self.display_2.get_width() // 2 - pause_surf.get_width() // 2, self.display_2.get_height() // 2 - pause_surf.get_height() // 2))
+                except Exception:
+                    pass
+
             screenshake_offset = (random.random() * self.screenshake - self.screenshake / 2, random.random() * self.screenshake - self.screenshake / 2)
             self.window.blit(pygame.transform.scale(self.display_2, self.window.get_size()), screenshake_offset)
             pygame.display.update()
