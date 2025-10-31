@@ -171,7 +171,7 @@ class Game:
                 if pos:
                     xs.append(int(pos[0] * self.tilemap.tile_size))
                     ys.append(int(pos[1] * self.tilemap.tile_size))
-            for off in self.tilemap.offgrid:
+            for off in self.tilemap.offgrid_tiles:
                 if 'pos' in off:
                     xs.append(int(off['pos'][0]))
                     ys.append(int(off['pos'][1]))
