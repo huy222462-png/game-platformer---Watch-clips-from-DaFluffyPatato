@@ -21,6 +21,8 @@ class PhysicsEntity:
         self.set_action('idle')
         
         self.last_movement = [0, 0]
+        # visual scale multiplier for rendering (1.0 = normal)
+        self.visual_scale = 1.0
     
     def rect(self):
         return pygame.Rect(self.pos[0], self.pos[1], self.size[0], self.size[1])
@@ -28,7 +30,45 @@ class PhysicsEntity:
     def set_action(self, action):
         if action != self.action:
             self.action = action
-            self.animation = self.game.assets[self.type + '/' + self.action].copy()
+            # try to use the configured asset prefix (self.type). If missing, fallback to 'player' or any available animation
+            key = self.type + '/' + self.action
+            try:
+                self.animation = self.game.assets[key].copy()
+                try:
+                    # reset animation state to ensure it's not already marked done
+                    self.animation.done = False
+                    self.animation.frame = 0
+                except Exception:
+                    pass
+            except Exception:
+                # fallback to default player assets if available
+                try:
+                    self.animation = self.game.assets['player/' + self.action].copy()
+                    try:
+                        self.animation.done = False
+                        self.animation.frame = 0
+                    except Exception:
+                        pass
+                except Exception:
+                    # final fallback: pick any animation-like asset if present
+                    found = None
+                    for k, v in self.game.assets.items():
+                        if isinstance(k, str) and k.endswith('/' + self.action):
+                            found = v
+                            break
+                    if found is not None:
+                        try:
+                            self.animation = found.copy()
+                            try:
+                                self.animation.done = False
+                                self.animation.frame = 0
+                            except Exception:
+                                pass
+                        except Exception:
+                            self.animation = found
+                    else:
+                        # leave animation as-is or set to a dummy empty animation object
+                        self.animation = getattr(self, 'animation', None)
         
     def update(self, tilemap, movement=(0, 0)):
         self.collisions = {'up': False, 'down': False, 'right': False, 'left': False}
@@ -74,7 +114,20 @@ class PhysicsEntity:
         self.animation.update()
         
     def render(self, surf, offset=(0, 0)):
-        surf.blit(pygame.transform.flip(self.animation.img(), self.flip, False), (self.pos[0] - offset[0] + self.anim_offset[0], self.pos[1] - offset[1] + self.anim_offset[1]))
+        try:
+            img = self.animation.img()
+            if getattr(self, 'visual_scale', 1.0) != 1.0:
+                vs = float(self.visual_scale)
+                new_w = max(1, int(img.get_width() * vs))
+                new_h = max(1, int(img.get_height() * vs))
+                img = pygame.transform.scale(img, (new_w, new_h))
+            surf.blit(pygame.transform.flip(img, self.flip, False), (self.pos[0] - offset[0] + int(self.anim_offset[0] * getattr(self, 'visual_scale', 1.0)), self.pos[1] - offset[1] + int(self.anim_offset[1] * getattr(self, 'visual_scale', 1.0))))
+        except Exception:
+            # fallback: original behavior
+            try:
+                surf.blit(pygame.transform.flip(self.animation.img(), self.flip, False), (self.pos[0] - offset[0] + self.anim_offset[0], self.pos[1] - offset[1] + self.anim_offset[1]))
+            except Exception:
+                pass
         
 class Enemy(PhysicsEntity):
     def __init__(self, game, pos, size):
@@ -147,8 +200,18 @@ class Enemy(PhysicsEntity):
         return True
 
 class Player(PhysicsEntity):
-    def __init__(self, game, pos, size):
-        super().__init__(game, 'player', pos, size)
+    def __init__(self, game, pos, size, asset_prefix='player'):
+        """Player may use a custom asset prefix (e.g., 'player_ninja' or 'player_samurai').
+
+        asset_prefix should match keys in Game.assets like 'player_ninja/idle'.
+        If assets are missing, PhysicsEntity.set_action will fallback to 'player'.
+        """
+        super().__init__(game, asset_prefix, pos, size)
+        # attack mode: 'ranged' uses shuriken/projectile, 'melee' uses sword
+        self.attack_mode = 'ranged'
+        # sword (melee) cooldown (frames)
+        self.sword_cooldown = 20
+        self.sword_cooldown_timer = 0
         self.air_time = 0
         self.jumps = 1
         self.wall_slide = False
@@ -162,6 +225,8 @@ class Player(PhysicsEntity):
         self.kunai_count = 0
         self.kunai_cooldown = 30  # frames (at 60fps -> 0.5s)
         self.kunai_cooldown_timer = 0
+        # optional override for what primary_attack() should use: 'shuriken'|'kunai'|'sword' or None
+        self.primary_attack_override = None
     
     def update(self, tilemap, movement=(0, 0)):
         super().update(tilemap, movement=movement)
@@ -187,6 +252,39 @@ class Player(PhysicsEntity):
                 self.flip = True
             self.set_action('wall_slide')
         
+        # If an attack animation was triggered, keep it until it finishes
+        if getattr(self, '_attack_override', False):
+            # animation.update() already ran in super().update; check if done
+            try:
+                done = getattr(self.animation, 'done', False)
+            except Exception:
+                done = False
+            if done:
+                # attack finished, clear override and immediately set the next action
+                try:
+                    self._attack_override = False
+                except Exception:
+                    pass
+                # choose the appropriate follow-up action now so we don't remain stuck on the attack frame
+                try:
+                    # prefer wall_slide/jump/run/idle in that order
+                    if (self.collisions.get('right') or self.collisions.get('left')) and self.air_time > 4:
+                        self.set_action('wall_slide')
+                    elif self.air_time > 4:
+                        self.set_action('jump')
+                    elif movement[0] != 0:
+                        self.set_action('run')
+                    else:
+                        self.set_action('idle')
+                except Exception:
+                    try:
+                        self.set_action('idle')
+                    except Exception:
+                        pass
+            else:
+                # keep current attack animation and skip changing action
+                return
+
         if not self.wall_slide:
             if self.air_time > 4:
                 self.set_action('jump')
@@ -219,6 +317,9 @@ class Player(PhysicsEntity):
         # cooldown timers
         if hasattr(self, 'kunai_cooldown_timer') and self.kunai_cooldown_timer > 0:
             self.kunai_cooldown_timer = max(0, self.kunai_cooldown_timer - 1)
+        # sword cooldown
+        if getattr(self, 'sword_cooldown_timer', 0) > 0:
+            self.sword_cooldown_timer = max(0, self.sword_cooldown_timer - 1)
     
     def render(self, surf, offset=(0, 0)):
         if abs(self.dashing) <= 50:
@@ -286,6 +387,9 @@ class Player(PhysicsEntity):
 
     def use_shuriken(self):
         """Throw a shuriken if available. Returns True if thrown."""
+        # only allow ranged shuriken if attack mode is ranged
+        if self.attack_mode != 'ranged':
+            return False
         if self.shuriken_count <= 0:
             return False
         self.shuriken_count -= 1
@@ -304,6 +408,96 @@ class Player(PhysicsEntity):
         except Exception:
             pass
         return True
+
+    def primary_attack(self):
+        """Primary attack button. Behavior depends on attack_mode."""
+        # allow explicit override (per-character) to map the primary button to a specific attack
+        override = getattr(self, 'primary_attack_override', None)
+        if override == 'kunai':
+            return self.use_kunai()
+        if override == 'shuriken':
+            return self.use_shuriken()
+        if override == 'sword':
+            return self.use_sword()
+
+        # default behavior: ranged -> shuriken, melee -> sword
+        if self.attack_mode == 'ranged':
+            return self.use_shuriken()
+        else:
+            return self.use_sword()
+
+    def use_sword(self):
+        """Melee sword attack. Does not consume items, uses a cooldown. Returns True if attack happened."""
+        # unlimited melee: no required items and no cooldown gating
+        # perform melee attack (same logic as use_kunai but without consuming)
+        attack_rect = self.rect().copy()
+        if self.flip:
+            attack_rect.x -= 20
+            attack_rect.width += 20
+        else:
+            attack_rect.width += 20
+
+        removed = []
+        for enemy in self.game.enemies.copy():
+            if attack_rect.colliderect(enemy.rect()):
+                removed.append(enemy)
+                for i in range(12):
+                    angle = random.random() * math.pi * 2
+                    speed = random.random() * 2 + 0.5
+                    self.game.particles.append(Particle(self.game, 'particle', enemy.rect().center, velocity=[math.cos(angle) * speed, math.sin(angle) * speed], frame=random.randint(0, 7)))
+                self.game.sparks.append(Spark(enemy.rect().center, 0, 5 + random.random()))
+                self.game.sparks.append(Spark(enemy.rect().center, math.pi, 5 + random.random()))
+        for e in removed:
+            try:
+                self.game.enemies.remove(e)
+            except Exception:
+                pass
+        # play knife sound if available, otherwise fallback to generic hit
+        try:
+            if self.game.sfx.get('knife'):
+                self.game.sfx['knife'].play()
+            else:
+                self.game.sfx['hit'].play()
+        except Exception:
+            pass
+
+        # try to play an attack animation if available in assets
+        try:
+            # possible keys for attack animation
+            keys = [f"{self.type}/attack", f"{self.type}/slash", f"{self.type}/sword", 'player/attack', 'attack']
+            attack_anim = None
+            for k in keys:
+                if k in self.game.assets:
+                    attack_anim = self.game.assets[k]
+                    break
+            if attack_anim is not None:
+                try:
+                    # copy the animation and force non-looping so it finishes
+                    new_anim = attack_anim.copy()
+                    try:
+                        new_anim.loop = False
+                        new_anim.done = False
+                        new_anim.frame = 0
+                    except Exception:
+                        pass
+                    self.animation = new_anim
+                except Exception:
+                    # fallback: assign and try to ensure it won't loop
+                    try:
+                        attack_anim.loop = False
+                        attack_anim.done = False
+                        attack_anim.frame = 0
+                    except Exception:
+                        pass
+                    self.animation = attack_anim
+                try:
+                    self._attack_override = True
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        return len(removed) > 0
     def use_kunai(self):
         """Use a kunai attack if available and not on cooldown.
         Kunai acts as a short-range attack (like previous sword) but has a cooldown.
@@ -341,6 +535,38 @@ class Player(PhysicsEntity):
                 pass
         try:
             self.game.sfx['hit'].play()
+        except Exception:
+            pass
+        # try to play a kunai/attack animation if available (so the attack is visible)
+        try:
+            keys = [f"{self.type}/kunai", f"{self.type}/attack", f"{self.type}/throw", 'player/kunai', 'player/attack', 'attack']
+            attack_anim = None
+            for k in keys:
+                if k in self.game.assets:
+                    attack_anim = self.game.assets[k]
+                    break
+            if attack_anim is not None:
+                try:
+                    new_anim = attack_anim.copy()
+                    try:
+                        new_anim.loop = False
+                        new_anim.done = False
+                        new_anim.frame = 0
+                    except Exception:
+                        pass
+                    self.animation = new_anim
+                except Exception:
+                    try:
+                        attack_anim.loop = False
+                        attack_anim.done = False
+                        attack_anim.frame = 0
+                    except Exception:
+                        pass
+                    self.animation = attack_anim
+                try:
+                    self._attack_override = True
+                except Exception:
+                    pass
         except Exception:
             pass
         return True

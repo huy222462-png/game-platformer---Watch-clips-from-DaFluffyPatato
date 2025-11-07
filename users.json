@@ -9,8 +9,8 @@
         {
             "username": "Huyk",
             "password": "123",
-            "failed_attempts": 6,
-            "locked": true
+            "failed_attempts": 0,
+            "locked": false
         }
     ]
 }

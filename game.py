@@ -54,7 +54,7 @@ class Game:
             'enemy/run': Animation(load_images('entities/enemy/run'), img_dur=4),
             'player/idle': Animation(load_images('entities/player/idle'), img_dur=6),
             'player/run': Animation(load_images('entities/player/run'), img_dur=4),
-            'player/jump': Animation(load_images('entities/player/jump')),
+            'player/jump': Animation(load_images('entities/player/jump'), loop=False),
             'player/slide': Animation(load_images('entities/player/slide')),
             'player/wall_slide': Animation(load_images('entities/player/wall_slide')),
             'particle/leaf': Animation(load_images('particles/leaf'), img_dur= 20,loop=False),
@@ -93,6 +93,65 @@ class Game:
         except Exception:
             self.assets['item/shuriken'] = None
 
+        # attempt to load alternate player character assets (ninja, samurai) if present
+        # automatically discover character folders under data/images/entities
+        self.character_dirs = {}  # map asset_prefix -> dir_name
+        # per-character scale multipliers (applied relative to default player height)
+        # increase samurai a bit so it looks larger than default after scaling
+        self.character_scales = {
+            'player_ninja': 1.0,
+        }
+    # reference collision height (pixels) used by default player animations
+    # The default Player is created with size (8, 15) below; keep this in sync
+        try:
+            ent_path = os.path.join('data', 'images', 'entities')
+            for entry in sorted(os.listdir(ent_path)):
+                full = os.path.join(ent_path, entry)
+                if not os.path.isdir(full):
+                    continue
+                if entry.lower() in ('player', 'enemy'):
+                    continue
+                # no special-case folders during discovery
+                # create an asset prefix from folder name
+                prefix = 'player_' + entry.lower()
+                self.character_dirs[prefix] = entry
+                # expected animation names (include attack/hurt if provided)
+                actions = ['idle', 'run', 'jump', 'slide', 'wall_slide', 'attack', 'hurt']
+                # find subdirs case-insensitively
+                subs = {d.lower(): d for d in os.listdir(full) if os.path.isdir(os.path.join(full, d))}
+                for act in actions:
+                    if act in subs:
+                        subdir = subs[act]
+                        try:
+                            imgs = load_images(f'entities/{entry}/{subdir}')
+                            # if default player idle animation exists, scale this character's images
+                            try:
+                                default_idle = None
+                                if 'player/idle' in self.assets and hasattr(self.assets['player/idle'], 'images'):
+                                    default_idle = self.assets['player/idle'].images[0]
+                                if default_idle is not None and imgs:
+                                    # apply per-character scale multiplier
+                                    mult = self.character_scales.get(prefix, 1.0)
+                                    target_h = max(1, int(default_idle.get_height() * mult))
+                                    scaled = []
+                                    for im in imgs:
+                                        if im.get_height() != target_h:
+                                            new_w = int(im.get_width() * (target_h / im.get_height()))
+                                            scaled.append(pygame.transform.scale(im, (new_w, target_h)))
+                                        else:
+                                            scaled.append(im)
+                                    imgs = scaled
+                            except Exception:
+                                pass
+                            # make attack/hurt/jump non-looping so they finish and don't lock the player
+                            is_loop = not (act in ('attack', 'hurt', 'jump'))
+                            self.assets[f'{prefix}/{act}'] = Animation(imgs, img_dur=6 if act == 'idle' else 4, loop=is_loop)
+                        except Exception:
+                            pass
+        except Exception:
+            # discovery is best-effort
+            pass
+
         """
         SOUNDS
         """
@@ -101,6 +160,8 @@ class Game:
             'dash': pygame.mixer.Sound('data/sfx/dash.wav'),
             'hit': pygame.mixer.Sound('data/sfx/hit.wav'),
             'shoot': pygame.mixer.Sound('data/sfx/shoot.wav'),
+            # optional knife sound for samuraicut melee
+            'knife': None,
             'ambience': pygame.mixer.Sound('data/sfx/ambience.wav'),
         }
 
@@ -109,6 +170,18 @@ class Game:
         self.sfx['hit'].set_volume(0.7)
         self.sfx['dash'].set_volume(0.3)
         self.sfx['jump'].set_volume(0.3)
+        # load knife sound if provided by user (non-fatal if missing)
+        try:
+            knife_sfx = pygame.mixer.Sound('data/sfx/knife.wav')
+            if knife_sfx:
+                self.sfx['knife'] = knife_sfx
+                try:
+                    self.sfx['knife'].set_volume(0.7)
+                except Exception:
+                    pass
+        except Exception:
+            # leave as None if missing
+            pass
 
         """
         PROBABLY WILL HAVE TO MAKE THIS (ANIMATION ASSETS LOAD) IN A SEPARATE FILE THEN CALL THE FILE.
@@ -392,6 +465,180 @@ class Game:
                         success, msg = register(username, password)
                         message = msg
 
+    def character_select(self, screen):
+        """Show a simple character selection screen. Returns chosen asset prefix string.
+
+        The menu is generated from discovered character folders under data/images/entities.
+        If no extra characters are found, the menu will offer the default 'player' entry.
+        """
+        font = getattr(self, 'ui_font', pygame.font.Font(None, 28))
+        title = "Chọn nhân vật"
+        # build choices from discovered character directories
+        choices = []
+        # include default player first
+        choices.append(("default", 'player'))
+        try:
+            for prefix, dirname in self.character_dirs.items():
+                # display label: capitalize dirname
+                label = dirname.replace('_', ' ').title()
+                choices.append((label, prefix))
+        except Exception:
+            pass
+
+        while True:
+            screen.fill((20, 20, 20))
+            tw = font.render(title, True, (255, 255, 255))
+            sw, sh = screen.get_size()
+            screen.blit(tw, (sw//2 - tw.get_width()//2, sh//2 - 120))
+
+            # draw two buttons
+            btn_font = font
+            btn_w, btn_h = 260, 48
+            spacing = 24
+            cx = sw // 2
+            base_y = sh // 2 - 20
+
+            btn_rects = []
+            for i, (label, prefix) in enumerate(choices):
+                x = cx - btn_w//2
+                y = base_y + i * (btn_h + spacing)
+                rect = pygame.Rect(x, y, btn_w, btn_h)
+                btn_rects.append((rect, label, prefix))
+                pygame.draw.rect(screen, (80, 80, 80), rect, border_radius=6)
+                pygame.draw.rect(screen, (200, 200, 200), rect, 2, border_radius=6)
+                # draw optional preview image if available (first frame)
+                preview_drawn = False
+                try:
+                    key = prefix + '/idle'
+                    if key in self.assets and hasattr(self.assets[key], 'images') and self.assets[key].images:
+                        img = self.assets[key].images[0]
+                        # scale preview to fit height
+                        ph = btn_h - 8
+                        pw = int(img.get_width() * (ph / img.get_height()))
+                        preview = pygame.transform.scale(img, (pw, ph))
+                        screen.blit(preview, (rect.x + 6, rect.y + 4))
+                        # shift label right
+                        lbl = btn_font.render(label, True, (255, 255, 255))
+                        screen.blit(lbl, (rect.x + 12 + pw, rect.y + (btn_h - lbl.get_height()) // 2))
+                        preview_drawn = True
+                except Exception:
+                    preview_drawn = False
+
+                if not preview_drawn:
+                    lbl = btn_font.render(label, True, (255, 255, 255))
+                    screen.blit(lbl, (rect.x + (btn_w - lbl.get_width()) // 2, rect.y + (btn_h - lbl.get_height()) // 2))
+
+            pygame.display.flip()
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit(); sys.exit()
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        return 'player'  # default
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    mx, my = event.pos
+                    for rect, label, prefix in btn_rects:
+                        if rect.collidepoint((mx, my)):
+                            # verify asset availability: look for prefix + '/idle' in assets
+                            if prefix + '/idle' in self.assets:
+                                return prefix
+                            else:
+                                # fallback to default player
+                                return 'player'
+
+    def apply_character_choice(self, prefix):
+        """Recreate the player using the chosen asset prefix while preserving some state.
+
+        If chosen prefix lacks assets, player will use default 'player'.
+        """
+        try:
+            # preserve basic state
+            old = getattr(self, 'player', None)
+            pos = old.pos if old is not None else (70, 50)
+            size = old.size if old is not None else (8, 15)
+            hits = getattr(old, 'hits', 0)
+            shurikens = getattr(old, 'shuriken_count', 0)
+            kunaic = getattr(old, 'kunai_count', 0)
+
+            # fallback if assets missing
+            if prefix + '/idle' not in self.assets:
+                prefix = 'player'
+
+            # create new player
+            from scripts.entities import Player
+            self.player = Player(self, pos, size, asset_prefix=prefix)
+            # apply visual scale if available
+            try:
+                self.player.visual_scale = float(self.character_scales.get(prefix, 1.0))
+            except Exception:
+                self.player.visual_scale = 1.0
+            # apply instance visual_scale (no per-character forced test scaling)
+            try:
+                self.player.visual_scale = float(self.character_scales.get(prefix, 1.0))
+            except Exception:
+                self.player.visual_scale = 1.0
+            # use the raw asset animation (no automatic per-instance rescaling)
+            try:
+                key = prefix + '/idle'
+                if key in self.assets:
+                    try:
+                        self.player.animation = self.assets[key].copy()
+                    except Exception:
+                        self.player.animation = self.assets[key]
+            except Exception:
+                pass
+            # reset anim_offset to default (user will edit images manually)
+            try:
+                self.player.anim_offset = (-3, -3)
+            except Exception:
+                pass
+            # force-set the idle animation from assets if available (ensure correct sprite used)
+            try:
+                key = prefix + '/idle'
+                if key in self.assets:
+                    try:
+                        self.player.animation = self.assets[key].copy()
+                    except Exception:
+                        self.player.animation = self.assets[key]
+            except Exception:
+                pass
+            # restore state
+            try:
+                self.player.hits = hits
+                self.player.shuriken_count = shurikens
+                self.player.kunai_count = kunaic
+            except Exception:
+                pass
+            # configure attack mode: default to ranged (no per-character samurai behavior)
+            try:
+                self.player.attack_mode = 'ranged'
+                # if the chosen character is the samuraicut variant, map primary attack to kunai
+                try:
+                    if 'samuraicut' in prefix.lower():
+                        # set primary attack to sword (melee) for samuraicut and ensure it's usable without pickups
+                        self.player.primary_attack_override = 'sword'
+                        # no item pickups required for sword; make sure counts aren't set to force ranged
+                        try:
+                            if hasattr(self.player, 'kunai_count'):
+                                # do not grant kunai by default for samuraicut
+                                self.player.kunai_count = 0
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            # update HUD to reflect new player max hits
+            try:
+                self.hud = HealthBar(max_hits=self.player.max_hits, pos=(4,4), size=(60,12))
+            except Exception:
+                pass
+            self.selected_character = prefix
+        except Exception:
+            # best-effort fallback
+            self.selected_character = 'player'
+
     def run(self):
         # MUSIC
         pygame.mixer.music.load('data/music.wav')
@@ -450,9 +697,9 @@ class Game:
                         self.player.dash()
                     # item usage keys
                     if event.key == pygame.K_z:
-                        # throw shuriken
+                        # primary attack (ranged or melee depending on chosen character)
                         try:
-                            used = self.player.use_shuriken()
+                            used = self.player.primary_attack()
                         except Exception:
                             used = False
                         if not used:
@@ -785,4 +1032,11 @@ if __name__ == "__main__":
     player_name = game.login_screen(screen)   # 👈 Hiện màn hình đăng nhập
     print(f"Xin chào, {player_name}!")         # Thông báo thành công
 
-    game.run()  # 👈 Sau khi đăng nhập thì chạy game        
+    # after successful login, show character selection and apply choice
+    try:
+        choice = game.character_select(screen)
+        game.apply_character_choice(choice)
+    except Exception:
+        pass
+
+    game.run()  # 👈 Sau khi đăng nhập thì chạy game
