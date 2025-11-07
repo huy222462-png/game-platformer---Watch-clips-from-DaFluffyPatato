@@ -52,6 +52,10 @@ class Game:
             'clouds': load_images('clouds'),
             'enemy/idle': Animation(load_images('entities/enemy/idle'), img_dur=6),
             'enemy/run': Animation(load_images('entities/enemy/run'), img_dur=4),
+            # boss assets
+            'boss/idle': None,
+            'boss/run': None,
+            'boss/attack': None,
             'player/idle': Animation(load_images('entities/player/idle'), img_dur=6),
             'player/run': Animation(load_images('entities/player/run'), img_dur=4),
             'player/jump': Animation(load_images('entities/player/jump'), loop=False),
@@ -93,6 +97,61 @@ class Game:
         except Exception:
             self.assets['item/shuriken'] = None
 
+        # load boss animations if available
+        print("Loading boss animations...")
+        # Try both lowercase and capitalized folder names
+        for idle_path in ['entities/boss/idle', 'entities/boss/Idle']:
+            try:
+                boss_idle = load_images(idle_path)
+                if boss_idle:
+                    self.assets['boss/idle'] = Animation(boss_idle, img_dur=8)
+                    print(f"Loaded boss/idle from {idle_path} with {len(boss_idle)} frames")
+                    break
+            except Exception as e:
+                print(f"Failed to load boss/idle from {idle_path}: {e}")
+                
+        for walk_path in ['entities/boss/walk', 'entities/boss/Walk']:
+            try:
+                boss_walk = load_images(walk_path)
+                if boss_walk:
+                    self.assets['boss/walk'] = Animation(boss_walk, img_dur=10)  # Slower walk
+                    print(f"Loaded boss/walk from {walk_path} with {len(boss_walk)} frames")
+                    break
+            except Exception as e:
+                print(f"Failed to load boss/walk from {walk_path}: {e}")
+            
+        try:
+            boss_attack1 = load_images('entities/boss/attack1')
+            if boss_attack1:
+                self.assets['boss/attack1'] = Animation(boss_attack1, img_dur=6, loop=False)  # Slower
+                print(f"Loaded boss/attack1 with {len(boss_attack1)} frames")
+            else:
+                print("No boss/attack1 images found")
+        except Exception as e:
+            print(f"Failed to load boss/attack1: {e}")
+            
+        try:
+            boss_attack2 = load_images('entities/boss/attack2')
+            if boss_attack2:
+                self.assets['boss/attack2'] = Animation(boss_attack2, img_dur=6, loop=False)  # Slower
+                print(f"Loaded boss/attack2 with {len(boss_attack2)} frames")
+            else:
+                print("No boss/attack2 images found")
+        except Exception as e:
+            print(f"Failed to load boss/attack2: {e}")
+            
+        for hurt_path in ['entities/boss/hurt', 'entities/boss/Hurt']:
+            try:
+                boss_hurt = load_images(hurt_path)
+                if boss_hurt:
+                    self.assets['boss/hurt'] = Animation(boss_hurt, img_dur=3, loop=False)
+                    print(f"Loaded boss/hurt from {hurt_path} with {len(boss_hurt)} frames")
+                    break
+            except Exception as e:
+                print(f"Failed to load boss/hurt from {hurt_path}: {e}")
+            
+        print("Boss animation loading complete.")
+
         # attempt to load alternate player character assets (ninja, samurai) if present
         # automatically discover character folders under data/images/entities
         self.character_dirs = {}  # map asset_prefix -> dir_name
@@ -109,7 +168,7 @@ class Game:
                 full = os.path.join(ent_path, entry)
                 if not os.path.isdir(full):
                     continue
-                if entry.lower() in ('player', 'enemy'):
+                if entry.lower() in ('player', 'enemy', 'boss'):
                     continue
                 # no special-case folders during discovery
                 # create an asset prefix from folder name
@@ -208,6 +267,8 @@ class Game:
         self.player = Player(self, (70,50), (8, 15))
         # HUD: health bar fixed to top-left of the screen
         self.hud = HealthBar(max_hits=self.player.max_hits, pos=(4,4), size=(60,12))
+        # Boss health bar in top-right corner
+        self.boss_hud = None  # Will be created when boss spawns
         self.movement = [False, False]
 
         # pickups on the map (list of dict: {'type': 'shuriken'|'kunai', 'pos': [x,y]})
@@ -268,6 +329,9 @@ class Game:
             self.leaf_spawners.append(pygame.Rect(4 + tree['pos'][0], 4 + tree['pos'][1], 23, 13))
 
         self.enemies = []
+        self.boss = None
+        self.boss_defeated = False
+        self.return_to_character_select = False
         # include variant 2 for boss spawners
         for spawner in self.tilemap.extract([('spawners', 0), ('spawners', 1), ('spawners', 2)]):
             if spawner['variant'] == 0:
@@ -281,11 +345,17 @@ class Game:
             elif spawner['variant'] == 1:
                 self.enemies.append(Enemy(self, spawner['pos'], (8, 15)))
             elif spawner['variant'] == 2:
-                # spawn a boss (bigger size and more HP)
+                # spawn a boss (stationary)
                 try:
-                    boss = Boss(self, spawner['pos'], (32, 48), hp=12)
-                    self.enemies.append(boss)
-                except Exception:
+                    boss_pos = spawner['pos']
+                    print(f"Spawning boss at position: {boss_pos}")  # Debug info
+                    self.boss = Boss(self, boss_pos, (32, 32))  # Store boss separately
+                    # Create boss health bar when boss is spawned  
+                    self.boss_hud = HealthBar(max_hits=self.boss.max_hp, pos=(320-70, 4), 
+                                            size=(65,12), bg_color=(40,20,20), fg_color=(200,50,50))
+                    print(f"Boss created successfully!")
+                except Exception as e:
+                    print(f"Failed to create boss: {e}")
                     # fallback to normal enemy if Boss construction fails
                     self.enemies.append(Enemy(self, spawner['pos'], (8, 15)))
 
@@ -686,6 +756,8 @@ class Game:
             # update HUD to reflect new player max hits
             try:
                 self.hud = HealthBar(max_hits=self.player.max_hits, pos=(4,4), size=(60,12))
+                # Reset boss HUD when switching characters
+                self.boss_hud = None
             except Exception:
                 pass
             self.selected_character = prefix
@@ -705,6 +777,9 @@ class Game:
 
         # Main loop
         while True:
+            # Check if we need to return to character select
+            if self.return_to_character_select:
+                break
             # clear logical display (pixel-art surface)
             self.display.fill((0, 0, 0, 0))  # RGBA Color
 
@@ -777,6 +852,12 @@ class Game:
                     if event.key == pygame.K_o:
                         pos = (self.player.rect().centerx, self.player.rect().centery)
                         self.pickups.append({'type': 'kunai', 'pos': [pos[0], pos[1]]})
+                    # debug: jump to boss map (map 3)
+                    if event.key == pygame.K_F3:
+                        if len(self.map_files) > 3:  # ensure map 3 exists (3.json)
+                            self.level = 3
+                            self.load_level(self.level)
+                            self.transition = -30
 
                 if event.type == pygame.KEYUP:
                     if event.key == pygame.K_LEFT:
@@ -807,14 +888,9 @@ class Game:
                             play_rect = pygame.Rect(center_x - btn_w - spacing//2, base_y, btn_w, btn_h)
                             exit_rect = pygame.Rect(center_x + spacing//2, base_y, btn_w, btn_h)
                             if play_rect.collidepoint((sx, sy)):
-                                # restart current level and unpause
-                                self.load_level(self.level)
+                                # return to character selection
+                                self.return_to_character_select = True
                                 self.paused = False
-                                # restore ambience volume hint
-                                try:
-                                    self.sfx.get('ambience', pygame.mixer.Sound('data/sfx/ambience.wav')).set_volume(0.2)
-                                except Exception:
-                                    pass
                             if exit_rect.collidepoint((sx, sy)):
                                 pygame.quit()
                                 sys.exit()
@@ -825,7 +901,11 @@ class Game:
             if not self.paused:
                 self.screenshake = max(0, self.screenshake - 1)
 
-                if not len(self.enemies):  # killed all the enemies
+                # Check if all enemies AND boss are defeated
+                all_enemies_dead = not len(self.enemies)
+                boss_dead = self.boss is None
+                
+                if all_enemies_dead and (boss_dead or self.boss is None):
                     self.transition += 1
                     if self.transition > 30:
                         # advance to next map using the precomputed json list
@@ -858,6 +938,7 @@ class Game:
 
                 self.tilemap.render(self.display, offset=render_scroll)
 
+                # Update regular enemies
                 for enemy in self.enemies.copy():
                     kill = enemy.update(self.tilemap, (0, 0))
                     enemy.render(self.display, offset=render_scroll)
@@ -866,6 +947,13 @@ class Game:
                             self.enemies.remove(enemy)
                         except Exception:
                             pass
+
+                # Update boss separately
+                if self.boss:
+                    boss_killed = self.boss.update(self.tilemap, (0, 0))
+                    self.boss.render(self.display, offset=render_scroll)
+                    if boss_killed:
+                        self.boss = None  # Boss defeated
 
                 if not self.dead:
                     self.player.update(self.tilemap, (self.movement[1] - self.movement[0], 0))
@@ -1033,8 +1121,33 @@ class Game:
             except Exception:
                 pass
 
+            # Render boss health bar if boss exists
+            try:
+                if hasattr(self, 'boss') and self.boss and self.boss_hud:
+                    # Calculate boss hits from HP (boss.max_hp - boss.hp = hits taken)
+                    boss_hits = self.boss.max_hp - self.boss.hp
+                    self.boss_hud.render(self.display_2, boss_hits)
+            except Exception:
+                pass
+
+            # if boss defeated, show WIN message
+            if self.boss_defeated:
+                try:
+                    overlay = pygame.Surface(self.display_2.get_size(), pygame.SRCALPHA)
+                    overlay.fill((0, 0, 0, 180))
+                    self.display_2.blit(overlay, (0, 0))
+                    win_font = getattr(self, 'ui_font', pygame.font.Font(None, 64))
+                    win_surf = win_font.render('WIN!', True, (255, 215, 0))  # Gold color
+                    self.display_2.blit(win_surf, (self.display_2.get_width() // 2 - win_surf.get_width() // 2, self.display_2.get_height() // 2 - win_surf.get_height() // 2 - 20))
+                    
+                    # Victory message
+                    victory_font = getattr(self, 'ui_font', pygame.font.Font(None, 24))
+                    victory_surf = victory_font.render('Boss Defeated!', True, (255, 255, 255))
+                    self.display_2.blit(victory_surf, (self.display_2.get_width() // 2 - victory_surf.get_width() // 2, self.display_2.get_height() // 2 + 20))
+                except Exception:
+                    pass
             # if paused, overlay a translucent layer with PAUSE
-            if self.paused:
+            elif self.paused:
                 try:
                     overlay = pygame.Surface(self.display_2.get_size(), pygame.SRCALPHA)
                     overlay.fill((0, 0, 0, 150))
@@ -1065,7 +1178,7 @@ class Game:
                     pygame.draw.rect(self.display_2, (200, 200, 200), exit_rect, 2, border_radius=4)
 
                     # labels
-                    play_label = btn_font.render('Play again', True, (255, 255, 255))
+                    play_label = btn_font.render('Chọn nhân vật', True, (255, 255, 255))
                     exit_label = btn_font.render('Exit', True, (255, 255, 255))
                     self.display_2.blit(play_label, (play_rect.x + (btn_w - play_label.get_width()) // 2, play_rect.y + (btn_h - play_label.get_height()) // 2))
                     self.display_2.blit(exit_label, (exit_rect.x + (btn_w - exit_label.get_width()) // 2, exit_rect.y + (btn_h - exit_label.get_height()) // 2))
@@ -1086,11 +1199,21 @@ if __name__ == "__main__":
     player_name = game.login_screen(screen)   # 👈 Hiện màn hình đăng nhập
     print(f"Xin chào, {player_name}!")         # Thông báo thành công
 
-    # after successful login, show character selection and apply choice
-    try:
-        choice = game.character_select(screen)
-        game.apply_character_choice(choice)
-    except Exception:
-        pass
+    # Game loop with character selection
+    while True:
+        # Reset return flag and reload level
+        game.return_to_character_select = False
+        game.load_level(game.level)  # Reset game state
+        
+        # Show character selection and apply choice
+        try:
+            choice = game.character_select(screen)
+            game.apply_character_choice(choice)
+        except Exception:
+            pass
 
-    game.run()  # 👈 Sau khi đăng nhập thì chạy game
+        # Run game
+        game.run()
+        
+        # If run() exits due to return_to_character_select, loop back to character select
+        # If run() exits due to quit (pygame.quit), the program will have already exited
