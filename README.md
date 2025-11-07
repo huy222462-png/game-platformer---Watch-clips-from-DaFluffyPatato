@@ -5,6 +5,103 @@ Chạy game bằng File game.py Các file dữ liệu hình ảnh từ asset ani
 
 Game 2D platformer được phát triển dựa trên clip của DaFluffyPatato. Đây là dự án học tập, không dùng cho mục đích thương mại.
 
+## 💻 Cài đặt cho máy mới (Setup từ đầu)
+
+### Bước 1: Cài đặt Python
+1. **Tải Python từ trang chính thức:**
+   - Vào https://python.org/downloads/
+   - Tải Python 3.7+ (khuyến nghị Python 3.10+)
+   
+2. **Cài đặt Python:**
+   - ✅ **Quan trọng:** Tích vào "Add Python to PATH"
+   - Chọn "Install Now"
+
+3. **Kiểm tra cài đặt:**
+```bash
+python --version
+# Hoặc
+python3 --version
+```
+
+### Bước 2: Cài đặt VS Code (khuyến nghị)
+1. **Tải VS Code:**
+   - Vào https://code.visualstudio.com/
+   - Tải và cài đặt
+
+2. **Cài Extension cho Python:**
+   - Mở VS Code
+   - Vào Extensions (Ctrl+Shift+X)
+   - Tìm và cài "Python" (của Microsoft)
+   - Tìm và cài "Pylance" (IntelliSense cho Python)
+
+### Bước 3: Clone/Tải project
+```bash
+# Nếu có git:
+git clone https://github.com/huy222462-png/game-platformer---Watch-clips-from-DaFluffyPatato.git
+
+# Hoặc tải ZIP từ GitHub và giải nén
+```
+
+### Bước 4: Cài đặt thư viện Python
+Mở Terminal/Command Prompt trong thư mục project:
+
+```bash
+# Cài pygame-ce (phiên bản mới, khuyến nghị):
+pip install pygame-ce
+
+# Nếu lỗi, thử:
+pip install pygame
+
+# Nếu máy có cả Python 2 và 3:
+pip3 install pygame-ce
+
+# Trên một số hệ thống:
+python -m pip install pygame-ce
+```
+
+### Bước 5: Kiểm tra hoạt động
+```bash
+# Di chuyển vào thư mục project
+cd game-platformer---Watch-clips-from-DaFluffyPatato
+
+# Chạy game
+python game.py
+```
+
+### ⚠️ Xử lý lỗi thường gặp:
+
+#### Lỗi "python is not recognized":
+- Python chưa được thêm vào PATH
+- Cài lại Python và tích "Add to PATH"
+- Hoặc dùng `py game.py` thay vì `python game.py`
+
+#### Lỗi "No module named 'pygame'":
+```bash
+# Kiểm tra pip:
+pip --version
+
+# Cài lại pygame:
+pip uninstall pygame pygame-ce
+pip install pygame-ce
+
+# Hoặc dùng conda (nếu có Anaconda):
+conda install pygame
+```
+
+#### Lỗi âm thanh/graphics trên Linux:
+```bash
+sudo apt-get install python3-pygame
+# Hoặc
+sudo apt-get install libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev
+```
+
+### 🎯 Test cài đặt thành công:
+Nếu game chạy được và bạn thấy:
+- Màn hình đăng nhập
+- Có thể chọn nhân vật
+- Game load map 1 và di chuyển được
+➜ **Cài đặt thành công!**
+
 ## 🎮 Cách chạy game
 
 ```bash
