@@ -482,6 +482,43 @@ class Game:
                         self.movement[0] = False
                     if event.key == pygame.K_RIGHT:
                         self.movement[1] = False
+                # handle mouse clicks while paused (map window -> display_2 coords)
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    if self.paused and event.button == 1:
+                        # map mouse (window) coords into display_2 coordinates
+                        wx, wy = self.window.get_size()
+                        dx, dy = self.display_2.get_size()
+                        mx, my = event.pos
+                        # scale from window to logical display_2
+                        if wx and wy:
+                            sx = mx * (dx / wx)
+                            sy = my * (dy / wy)
+                        else:
+                            sx, sy = mx, my
+
+                        # compute same button layout as drawn below
+                        try:
+                            pause_font = getattr(self, 'ui_font', pygame.font.Font(None, 24))
+                            btn_w, btn_h = 120, 28
+                            spacing = 12
+                            center_x = dx // 2
+                            base_y = dy // 2 + 24
+                            play_rect = pygame.Rect(center_x - btn_w - spacing//2, base_y, btn_w, btn_h)
+                            exit_rect = pygame.Rect(center_x + spacing//2, base_y, btn_w, btn_h)
+                            if play_rect.collidepoint((sx, sy)):
+                                # restart current level and unpause
+                                self.load_level(self.level)
+                                self.paused = False
+                                # restore ambience volume hint
+                                try:
+                                    self.sfx.get('ambience', pygame.mixer.Sound('data/sfx/ambience.wav')).set_volume(0.2)
+                                except Exception:
+                                    pass
+                            if exit_rect.collidepoint((sx, sy)):
+                                pygame.quit()
+                                sys.exit()
+                        except Exception:
+                            pass
 
             # If paused, skip gameplay updates but still render the current frame and overlay
             if not self.paused:
@@ -704,6 +741,33 @@ class Game:
                     pause_font = getattr(self, 'ui_font', pygame.font.Font(None, 36))
                     pause_surf = pause_font.render('PAUSE', True, (255, 255, 255))
                     self.display_2.blit(pause_surf, (self.display_2.get_width() // 2 - pause_surf.get_width() // 2, self.display_2.get_height() // 2 - pause_surf.get_height() // 2))
+                except Exception:
+                    pass
+
+                # draw simple buttons: Play again (restart level) and Exit
+                try:
+                    # smaller font for buttons
+                    btn_font = getattr(self, 'ui_font', pygame.font.Font(None, 24))
+                    btn_w, btn_h = 120, 28
+                    spacing = 12
+                    center_x = self.display_2.get_width() // 2
+                    base_y = self.display_2.get_height() // 2 + 24
+
+                    play_rect = pygame.Rect(center_x - btn_w - spacing//2, base_y, btn_w, btn_h)
+                    exit_rect = pygame.Rect(center_x + spacing//2, base_y, btn_w, btn_h)
+
+                    # button background
+                    pygame.draw.rect(self.display_2, (80, 80, 80), play_rect, border_radius=4)
+                    pygame.draw.rect(self.display_2, (80, 80, 80), exit_rect, border_radius=4)
+                    # button border
+                    pygame.draw.rect(self.display_2, (200, 200, 200), play_rect, 2, border_radius=4)
+                    pygame.draw.rect(self.display_2, (200, 200, 200), exit_rect, 2, border_radius=4)
+
+                    # labels
+                    play_label = btn_font.render('Play again', True, (255, 255, 255))
+                    exit_label = btn_font.render('Exit', True, (255, 255, 255))
+                    self.display_2.blit(play_label, (play_rect.x + (btn_w - play_label.get_width()) // 2, play_rect.y + (btn_h - play_label.get_height()) // 2))
+                    self.display_2.blit(exit_label, (exit_rect.x + (btn_w - exit_label.get_width()) // 2, exit_rect.y + (btn_h - exit_label.get_height()) // 2))
                 except Exception:
                     pass
 
