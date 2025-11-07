@@ -148,6 +148,22 @@ class Game:
                             self.assets[f'{prefix}/{act}'] = Animation(imgs, img_dur=6 if act == 'idle' else 4, loop=is_loop)
                         except Exception:
                             pass
+                
+                # ensure all characters have basic animations by copying from idle if missing
+                if f'{prefix}/idle' in self.assets:
+                    base_idle = self.assets[f'{prefix}/idle']
+                    for required_action in ['wall_slide', 'jump', 'run']:
+                        if f'{prefix}/{required_action}' not in self.assets:
+                            try:
+                                # copy idle animation but adjust img_dur and loop for the action
+                                is_loop = not (required_action in ('attack', 'hurt', 'jump'))
+                                self.assets[f'{prefix}/{required_action}'] = Animation(
+                                    base_idle.images, 
+                                    img_dur=4, 
+                                    loop=is_loop
+                                )
+                            except Exception:
+                                pass
         except Exception:
             # discovery is best-effort
             pass
@@ -601,6 +617,44 @@ class Game:
                         self.player.animation = self.assets[key].copy()
                     except Exception:
                         self.player.animation = self.assets[key]
+                    # adjust collision size to match visual asset height so wall_slide and
+                    # other collision-based states align with the sprite dimensions
+                    try:
+                        # prefer to compare against the default player's idle image
+                        default_idle_img = None
+                        if 'player/idle' in self.assets and hasattr(self.assets['player/idle'], 'images'):
+                            default_idle_img = self.assets['player/idle'].images[0]
+                        chosen_img = None
+                        if hasattr(self.player.animation, 'images'):
+                            chosen_img = self.player.animation.images[0]
+                        elif hasattr(self.player.animation, 'get_width'):
+                            chosen_img = self.player.animation
+                        if default_idle_img is not None and chosen_img is not None:
+                            # scale factor between chosen and default idle image heights
+                            scale_factor = float(chosen_img.get_height()) / float(default_idle_img.get_height())
+                            old_size = size
+                            try:
+                                old_size = tuple(old.size) if hasattr(old, 'size') else size
+                            except Exception:
+                                old_size = size
+                            new_w = max(1, int(old_size[0] * scale_factor))
+                            new_h = max(1, int(old_size[1] * scale_factor))
+                            # keep the player's feet grounded by moving the y position up by the height delta
+                            try:
+                                self.player.pos[1] = float(self.player.pos[1]) - (new_h - old_size[1])
+                            except Exception:
+                                try:
+                                    self.player.pos = [self.player.pos[0], self.player.pos[1] - (new_h - old_size[1])]
+                                except Exception:
+                                    pass
+                            self.player.size = (new_w, new_h)
+                            # small vertical anim offset tweak to center the sprite better
+                            try:
+                                self.player.anim_offset = (self.player.anim_offset[0], int(self.player.anim_offset[1] - (chosen_img.get_height() - default_idle_img.get_height()) / 2))
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
             except Exception:
                 pass
             # restore state

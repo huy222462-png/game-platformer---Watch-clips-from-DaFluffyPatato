@@ -254,44 +254,56 @@ class Player(PhysicsEntity):
         
         # If an attack animation was triggered, keep it until it finishes
         if getattr(self, '_attack_override', False):
-            # animation.update() already ran in super().update; check if done
-            try:
-                done = getattr(self.animation, 'done', False)
-            except Exception:
-                done = False
-            if done:
-                # attack finished, clear override and immediately set the next action
+            # wall_slide always takes priority over attack animations
+            if self.wall_slide:
                 try:
                     self._attack_override = False
                 except Exception:
                     pass
-                # choose the appropriate follow-up action now so we don't remain stuck on the attack frame
+                # don't return here, let the normal logic handle wall_slide
+            else:
+                # animation.update() already ran in super().update; check if done
                 try:
-                    # prefer wall_slide/jump/run/idle in that order
-                    if (self.collisions.get('right') or self.collisions.get('left')) and self.air_time > 4:
-                        self.set_action('wall_slide')
-                    elif self.air_time > 4:
-                        self.set_action('jump')
-                    elif movement[0] != 0:
-                        self.set_action('run')
-                    else:
-                        self.set_action('idle')
+                    done = getattr(self.animation, 'done', False)
                 except Exception:
+                    done = False
+                if done:
+                    # attack finished, clear override and immediately set the next action
                     try:
-                        self.set_action('idle')
+                        self._attack_override = False
                     except Exception:
                         pass
-            else:
-                # keep current attack animation and skip changing action
-                return
+                    # force clear the current action so set_action will actually change it
+                    self.action = ''
+                    # choose the appropriate follow-up action now so we don't remain stuck on the attack frame
+                    try:
+                        # prefer wall_slide/jump/run/idle in that order
+                        if (self.collisions.get('right') or self.collisions.get('left')) and self.air_time > 4:
+                            self.set_action('wall_slide')
+                        elif self.air_time > 4:
+                            self.set_action('jump')
+                        elif movement[0] != 0:
+                            self.set_action('run')
+                        else:
+                            self.set_action('idle')
+                    except Exception:
+                        try:
+                            self.set_action('idle')
+                        except Exception:
+                            pass
+                else:
+                    # keep attack animation and skip other action changes
+                    return
 
-        if not self.wall_slide:
-            if self.air_time > 4:
-                self.set_action('jump')
-            elif movement[0] != 0:
-                self.set_action('run')
-            else:
-                self.set_action('idle')
+        # only set normal actions if not in attack override mode
+        if not getattr(self, '_attack_override', False):
+            if not self.wall_slide:
+                if self.air_time > 4:
+                    self.set_action('jump')
+                elif movement[0] != 0:
+                    self.set_action('run')
+                else:
+                    self.set_action('idle')
         
         if abs(self.dashing) in {60, 50}:
             for i in range(20):
